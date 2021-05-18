@@ -10,6 +10,7 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+import sys
 
 from django.db import transaction as tx
 from django.conf import settings
@@ -33,7 +34,7 @@ SAVE_USER_PASSWD = getattr(settings, 'LDAP_SAVE_LOGIN_PASSWORD', True)
 
 # TODO https://github.com/Monogramm/taiga-contrib-ldap-auth-ext/issues/17
 # Taiga super users group id
-#GROUP_ADMIN = getattr(settings, 'LDAP_GROUP_ADMIN', '')
+GROUP_ADMIN = getattr(settings, 'LDAP_GROUP_ADMIN', '')
 
 
 def ldap_login_func(request):
@@ -105,7 +106,12 @@ def register_or_update(username: str, email: str, full_name: str, password: str)
 
     # TODO https://github.com/Monogramm/taiga-contrib-ldap-auth-ext/issues/15
     # TODO https://github.com/Monogramm/taiga-contrib-ldap-auth-ext/issues/17
-    superuser = False
+    if GROUP_ADMIN:
+        superuser = connector.is_user_in_group(username, GROUP_ADMIN)
+    else:
+        superuser = False
+    # INFO the user also needs to be staff member to access the admin panel
+    staff_member = superuser
 
     try:
         # has user logged in before?
@@ -115,7 +121,8 @@ def register_or_update(username: str, email: str, full_name: str, password: str)
         user = user_model.objects.create(username=username_unique,
                                          email=email,
                                          full_name=full_name,
-                                         is_superuser=superuser)
+                                         is_superuser=superuser,
+                                         is_staff=staff_member)
         if SAVE_USER_PASSWD:
             # Set local password to match LDAP (issues/21)
             user.set_password(password)
@@ -133,9 +140,11 @@ def register_or_update(username: str, email: str, full_name: str, password: str)
 
         user.save()
         # update DB entry if LDAP field values differ
-        if user.email != email or user.full_name != full_name:
+        if user.email != email or user.full_name != full_name \
+                or user.is_superuser != superuser:
             user_object = user_model.objects.filter(pk=user.pk)
-            user_object.update(email=email, full_name=full_name)
+            user_object.update(email=email, full_name=full_name,
+                               is_superuser=superuser, is_staff=staff_member)
             user.refresh_from_db()
 
     return user
